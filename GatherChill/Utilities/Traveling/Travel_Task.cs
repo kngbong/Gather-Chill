@@ -2,6 +2,7 @@
 using ECommons.GameHelpers;
 using ECommons.Throttlers;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using GatherChill.GatheringInfo;
 using GatherChill.Utilities.Tools;
 using GatherChill.Utilities.Utility;
@@ -12,47 +13,33 @@ public static partial class TravelUtil
 {
     private static (uint baseId, bool flyingRequired) LastNode = (0, false);
     private static int _flyPathAttempts = 0;
-    private static uint _flightFallbackWarnedTerritory = 0;
 
     /// <summary>
-    /// Some route files mark ARR locations as flying-only even though those zones never supported flight.
-    /// Honouring that flag makes Task_FlyTo mount and jump on the spot forever, so only trust it where
-    /// flight is actually possible.
+    /// Flight is unlocked per zone: in ARR after finishing the 2.0 main scenario, in later expansions by
+    /// collecting that zone's aether currents. <see cref="PlayerState.CanFly"/> reflects that state.
     /// </summary>
-    private static bool TerritorySupportsFlight()
-    {
-        if (Player.Territory.ValueNullable is not { } territory)
-            return false;
-
-        return territory.Mount && !territory.IsPvpZone && territory.ExVersion.Value.RowId > 0;
-    }
-
-    private static bool RequiresFlight(NodeLocation node)
-    {
-        if (!node.RequiresFlying)
-            return false;
-
-        if (TerritorySupportsFlight())
-            return true;
-
-        if (_flightFallbackWarnedTerritory != Player.Territory.RowId)
-        {
-            _flightFallbackWarnedTerritory = Player.Territory.RowId;
-            IceLogging.Debug("This route marks a node as flying-only, but this territory doesn't support flying. Walking to it instead.", "Travel: Flight Check");
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Flight is only usable in territories that support it and once it has been unlocked there.
-    /// </summary>
-    private static bool CanFlyHere()
+    public static unsafe bool CanFlyInCurrentTerritory()
     {
         if (Svc.Condition[ConditionFlag.InFlight])
             return true;
 
-        if (!TerritorySupportsFlight())
+        var state = PlayerState.Instance();
+        return state != null && state->CanFly;
+    }
+
+    /// <summary>
+    /// A location marked as flying-only can't be reached on foot. Only honour it when flight is actually
+    /// unlocked, otherwise the caller must skip it (walking there would just mount and jump in place).
+    /// </summary>
+    private static bool RequiresFlight(NodeLocation node)
+        => node.RequiresFlying && CanFlyInCurrentTerritory();
+
+    /// <summary>
+    /// Flight is only usable when it is unlocked for this territory and the game lets us take off.
+    /// </summary>
+    private static bool CanFlyHere()
+    {
+        if (!CanFlyInCurrentTerritory())
             return false;
 
         // Not mounted yet: Task_FlyTo mounts first and checks again on a later tick.

@@ -36,6 +36,9 @@ namespace GatherChill.Scheduler.Tasks
         private static uint? TargetNodeId = null;
         private static int NodeCheckIndex = 0;
 
+        // Flying-only nodes we already told the user about, so a mixed route doesn't spam chat every sweep
+        private static readonly HashSet<uint> FlyingOnlyNodeWarned = new();
+
         // A route that never produces a node object (too low level, broken route data, ...) must not loop forever.
         // Nodes do go on cooldown after being gathered, so only give up when it has been failing for a while.
         private const int MaxSweepsWithoutNode = 6;
@@ -414,6 +417,17 @@ namespace GatherChill.Scheduler.Tasks
                 return true;
             }
 
+            // Flight is unlocked per zone (ARR: after the 2.0 MSQ, later expansions: aether currents).
+            // A route whose nodes all require flying can't be gathered at all until then, so stop with a clear reason.
+            var canFly = TravelUtil.CanFlyInCurrentTerritory();
+            if (!canFly && GatherRoute.All(n => n.Locations.Count > 0 && n.Locations.All(l => l.RequiresFlying)))
+            {
+                var message = "Stopping: every node on this route can only be reached by flying, but flying isn't unlocked in this zone yet.";
+                IceLogging.ChatError(message, tag);
+                SchedulerMain.Fail(message);
+                return true;
+            }
+
             // RouteIndex >= Count means we ran past the end of the list -> wrap to 0
             if (RouteIndex >= GatherRoute.Count)
                 RouteIndex = 0;
@@ -455,6 +469,27 @@ namespace GatherChill.Scheduler.Tasks
             // Guard against a stale index when the node has fewer locations
             var locationIndex = ActiveLocationIndex < currentNode.Locations.Count ? ActiveLocationIndex : 0;
             var location = currentNode.Locations[locationIndex];
+
+            // A flying-only spot can't be reached on foot. Use a ground spot of the same node when there is
+            // one; otherwise skip the node instead of trying to mount and jump at it forever.
+            if (!canFly && location.RequiresFlying)
+            {
+                var groundLocation = currentNode.Locations.FirstOrDefault(l => !l.RequiresFlying);
+                if (groundLocation is not null)
+                {
+                    location = groundLocation;
+                }
+                else if (!currentNode.Locations.Any(l => Player.DistanceTo(l.Position) < 3.4))
+                {
+                    // Nothing to walk to and we're not already next to it: this node needs flight we don't have.
+                    if (FlyingOnlyNodeWarned.Add(currentNode.NodeId))
+                        IceLogging.ChatInfo($"Skipping node {currentNode.NodeId}: it can only be reached by flying, which isn't unlocked here yet.", tag);
+
+                    TargetNodeId = null;
+                    RouteIndex++;
+                    return true;
+                }
+            }
 
             TargetNodeId = currentNode.NodeId;
 
@@ -545,6 +580,15 @@ namespace GatherChill.Scheduler.Tasks
 
             IceLogging.Verbose($"Checking location: {NodeCheckIndex}");
             var location = currentNode.Locations[NodeCheckIndex];
+
+            // Don't walk towards a spot that is only reachable by flying while flight is still locked.
+            if (location.RequiresFlying && !TravelUtil.CanFlyInCurrentTerritory())
+            {
+                IceLogging.Debug($"Skipping flying-only location {NodeCheckIndex} of node {currentNode.NodeId}: flying isn't unlocked here", tag);
+                NodeCheckIndex += 1;
+                return false;
+            }
+
             var distanceToLoc = Player.DistanceTo(location.Position);
 
             if (EzThrottler.Throttle("Location message throttle"))
@@ -594,9 +638,22 @@ namespace GatherChill.Scheduler.Tasks
                 return true;
             }
 
+            // Already next to it: gather it even if the route marks the spot as flying-only
             if (Player.DistanceTo(node) < 3.4)
             {
                 P.TaskManager.Enqueue(() => InteractWithNode(currentNode.NodeId), "Interacting with node");
+                return true;
+            }
+
+            // The node object spawned at a flying-only spot, but flight isn't unlocked yet. Skip it rather
+            // than trying to fly there (which mounts and jumps in place forever).
+            if (targetLocation.RequiresFlying && !TravelUtil.CanFlyInCurrentTerritory())
+            {
+                if (FlyingOnlyNodeWarned.Add(currentNode.NodeId))
+                    IceLogging.ChatInfo($"Skipping node {currentNode.NodeId}: its spot can only be reached by flying, which isn't unlocked here yet.", tag);
+
+                TargetNodeId = null;
+                RouteIndex++;
                 return true;
             }
 
