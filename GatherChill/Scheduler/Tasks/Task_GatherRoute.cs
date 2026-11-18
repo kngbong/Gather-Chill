@@ -36,6 +36,13 @@ namespace GatherChill.Scheduler.Tasks
         private static uint? TargetNodeId = null;
         private static int NodeCheckIndex = 0;
 
+        // A route that never produces a node object (too low level, broken route data, ...) must not loop forever.
+        // Nodes do go on cooldown after being gathered, so only give up when it has been failing for a while.
+        private const int MaxSweepsWithoutNode = 6;
+        private static readonly TimeSpan MaxTimeWithoutNode = TimeSpan.FromMinutes(3);
+        private static int SweepsWithoutNode = 0;
+        private static DateTime? FirstSweepWithoutNodeAt = null;
+
         // Which entry of the current node's Locations to use. 0 = default behavior.
         private static int ActiveLocationIndex = 0;
 
@@ -124,6 +131,56 @@ namespace GatherChill.Scheduler.Tasks
             return Svc.Objects.FirstOrDefault(obj => obj.BaseId == nodeId
                                                   && obj.IsTargetable
                                                   && obj.ObjectKind == ObjectKind.GatheringPoint);
+        }
+
+        private static void ResetNodeSweepWatch()
+        {
+            SweepsWithoutNode = 0;
+            FirstSweepWithoutNodeAt = null;
+        }
+
+        /// <summary>
+        /// A full pass over every node/location found nothing. Log what the client actually has around us
+        /// (missing object vs. wrong level vs. broken route data) and stop instead of looping forever.
+        /// </summary>
+        private static void StopForMissingNodes()
+        {
+            const string tag = "Task: Gather Travel";
+
+            var selected = Gather_Helper.GatherRoute;
+            var itemName = Gather_Util.Sheet_ItemInfo.TryGetValue(selected.itemId, out var itemInfo)
+                ? itemInfo.Name
+                : $"Item {selected.itemId}";
+            var job = Gather_Util.Sheet_RouteInfo.TryGetValue(selected.routeId, out var routeInfo) ? routeInfo.Job : Player.Job;
+            var requiredLevel = Gather_Helper.GetRequiredLevel(selected.routeId);
+            var jobName = Gather_Helper.GetJobName(job);
+
+            var stuckFor = FirstSweepWithoutNodeAt is { } since ? DateTime.UtcNow - since : TimeSpan.Zero;
+
+            IceLogging.Error($"Route {selected.routeId} ({itemName}) found no nodes in {SweepsWithoutNode} full passes over {stuckFor.TotalMinutes:F1}m. " +
+                             $"{jobName} level {Player.GetLevel(job)} (route needs {requiredLevel}), territory {Svc.ClientState.TerritoryType}.", tag);
+
+            foreach (var node in GatherRoute)
+            {
+                var anyObject = Svc.Objects.FirstOrDefault(x => x.BaseId == node.NodeId);
+                var state = anyObject == null
+                    ? "not in the object table"
+                    : $"kind={anyObject.ObjectKind} targetable={anyObject.IsTargetable}";
+                IceLogging.Error($"  node {node.NodeId}: {state}", tag);
+            }
+
+            var nearby = Svc.Objects
+                .Where(x => x.ObjectKind == ObjectKind.GatheringPoint && Player.DistanceTo(x) < 100f)
+                .GroupBy(x => x.BaseId)
+                .Select(g => $"{g.Key} (x{g.Count()}, {(g.Any(o => o.IsTargetable) ? "targetable" : "not targetable")})")
+                .ToList();
+            IceLogging.Error($"  gathering points within 100y: {(nearby.Count == 0 ? "none" : string.Join(", ", nearby))}", tag);
+
+            var message = $"Stopping: no {itemName} nodes found on route {selected.routeId} after {SweepsWithoutNode} passes. " +
+                          $"Your {jobName} is level {Player.GetLevel(job)}; this route needs level {requiredLevel}. " +
+                          "If the nodes aren't visible in game, level that job up or pick another route.";
+            IceLogging.ChatError(message, tag);
+            SchedulerMain.Fail(message);
         }
 
         private static GatherNodeKind GetRouteKind(uint routeId)
@@ -331,6 +388,7 @@ namespace GatherChill.Scheduler.Tasks
 
                 GatherRoute.Clear();
                 GatherRoute.AddRange(route.NodeInfo.OrderBy(n => n.GroupId));
+                ResetNodeSweepWatch();
 
                 var order = string.Join(", ", GatherRoute.Select(n => $"{n.NodeId} (G{n.GroupId})"));
                 IceLogging.Verbose($"GatherRoute order: {order}", tag);
@@ -339,6 +397,20 @@ namespace GatherChill.Scheduler.Tasks
             if (GatherRoute.Count == 0)
             {
                 IceLogging.Warning("No nodes were in this route is loaded, which means that it doesn't know where tf to go. Please report the route/item", tag);
+                return true;
+            }
+
+            // The client hides nodes the current job can't gather yet, so traveling to them can never succeed
+            if (!Gather_Helper.MeetsLevelRequirement(Gather_Helper.GatherRoute.routeId))
+            {
+                var requiredLevel = Gather_Helper.GetRequiredLevel(Gather_Helper.GatherRoute.routeId);
+                var job = Gather_Util.Sheet_RouteInfo.TryGetValue(Gather_Helper.GatherRoute.routeId, out var levelInfo) ? levelInfo.Job : Player.Job;
+                var jobName = Gather_Helper.GetJobName(job);
+                var itemName = Gather_Util.Sheet_ItemInfo.TryGetValue(Gather_Helper.GatherRoute.itemId, out var levelItem) ? levelItem.Name : $"Item {Gather_Helper.GatherRoute.itemId}";
+                var message = $"Stopping: {itemName} needs {jobName} level {requiredLevel} for its nodes to show up, but {jobName} is level {Player.GetLevel(job)}.";
+
+                IceLogging.ChatError(message, tag);
+                SchedulerMain.Fail(message);
                 return true;
             }
 
@@ -403,6 +475,7 @@ namespace GatherChill.Scheduler.Tasks
 
             if (validNode != null)
             {
+                ResetNodeSweepWatch();
                 IceLogging.Debug("we're within range, checking travel kind now");
                 P.TaskManager.Enqueue(() => Travel_MoveAndInteract(validNode), "Checking Travel Kind");
                 return true;
@@ -440,6 +513,23 @@ namespace GatherChill.Scheduler.Tasks
                 RouteIndex += 1;
                 NodeCheckIndex = 0;
 
+                // Wrapped past the last node without seeing a single one: count it and bail out if it keeps happening
+                if (RouteIndex >= GatherRoute.Count)
+                {
+                    RouteIndex = 0;
+                    SweepsWithoutNode++;
+                    FirstSweepWithoutNodeAt ??= DateTime.UtcNow;
+
+                    var stuckFor = DateTime.UtcNow - FirstSweepWithoutNodeAt.Value;
+                    IceLogging.Debug($"No node found on the whole route ({SweepsWithoutNode}/{MaxSweepsWithoutNode} passes, {stuckFor.TotalMinutes:F1}m)", tag);
+
+                    if (SweepsWithoutNode >= MaxSweepsWithoutNode && stuckFor >= MaxTimeWithoutNode)
+                    {
+                        StopForMissingNodes();
+                        return true;
+                    }
+                }
+
                 if (EzThrottler.Throttle("Else statement"))
                 {
                     IceLogging.Debug($"Gather route count: {GatherRoute.Count}");
@@ -474,6 +564,7 @@ namespace GatherChill.Scheduler.Tasks
             var validNode = FindValidNode(currentNode.NodeId);
             if (validNode != null)
             {
+                ResetNodeSweepWatch();
                 IceLogging.Debug("We've found a valid node! Time to pathfind/interact with it", tag);
                 NodeCheckIndex = 0; // Reset for next time
                 P.TaskManager.Enqueue(() => Travel_MoveAndInteract(validNode), "Checking Travel Kind");

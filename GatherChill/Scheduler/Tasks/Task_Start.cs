@@ -1,4 +1,5 @@
 ﻿using ECommons.Throttlers;
+using ECommons.GameHelpers;
 using GatherChill.Enums;
 using GatherChill.Scheduler.Handlers;
 using GatherChill.Utilities.GatheringHelpers;
@@ -11,6 +12,9 @@ namespace GatherChill.Scheduler.Tasks
 {
     internal class Task_Start
     {
+        // Routes we already told the user about, so the chat isn't spammed every tick
+        private static readonly HashSet<uint> WarnedLevelBlockedRoutes = new();
+
         public static void Enqueue()
         {
             if (Svc.Condition[ConditionFlag.Gathering])
@@ -103,6 +107,7 @@ namespace GatherChill.Scheduler.Tasks
                 List<Gather_Helper.SelectedRoute> LegendaryItems = new();
                 List<Gather_Helper.SelectedRoute> EphemeralItems = new();
                 List<Gather_Helper.SelectedRoute> NormalItems = new();
+                List<Gather_Helper.SelectedRoute> LevelBlocked = new();
 
                 foreach (var item in itemList)
                 {
@@ -112,6 +117,27 @@ namespace GatherChill.Scheduler.Tasks
                         var gatherRoute = P.routeEditor.GetRoute(route);
                         if (gatherRoute == null || gatherRoute.AetheryteId == 0)
                             continue;
+
+                        // Nodes the current job can't see yet would just make the travel loop spin forever
+                        if (!Gather_Helper.MeetsLevelRequirement(route))
+                        {
+                            LevelBlocked.Add(new() { routeId = route, itemId = item.ItemId });
+
+                            if (WarnedLevelBlockedRoutes.Add(route))
+                            {
+                                var itemName = Gather_Util.Sheet_ItemInfo.TryGetValue(item.ItemId, out var itemInfo)
+                                    ? itemInfo.Name
+                                    : $"Item {item.ItemId}";
+                                var requiredLevel = Gather_Helper.GetRequiredLevel(route);
+                                var jobName = Gather_Helper.GetJobName(routeInfo.Job);
+                                var warning = $"{itemName}: your {jobName} is level {Player.GetLevel(routeInfo.Job)}, but this route needs level {requiredLevel}. " +
+                                              "The game doesn't spawn nodes you're too low level for, so it's being skipped.";
+                                IceLogging.Warning(warning, tag);
+                                IceLogging.ChatError(warning);
+                            }
+
+                            continue;
+                        }
 
                         if (routeInfo.Kind is GatherNodeKind.Legendary or GatherNodeKind.Unspoiled)
                         {
@@ -188,6 +214,25 @@ namespace GatherChill.Scheduler.Tasks
 
                     Gather_Helper.GatherRoute = first;
                     Gather_Helper.State = IceState.Teleport;
+                    return true;
+                }
+
+                // Everything got filtered out (usually the level check), so explain why instead of retrying forever
+                if (LegendaryItems.Count == 0 && EphemeralItems.Count == 0 && LevelBlocked.Count != 0)
+                {
+                    var first = LevelBlocked.First();
+                    var itemName = Gather_Util.Sheet_ItemInfo.TryGetValue(first.itemId, out var blockedItemInfo)
+                        ? blockedItemInfo.Name
+                        : $"Item {first.itemId}";
+                    var job = routeSheet.TryGetValue(first.routeId, out var blockedRouteInfo) ? blockedRouteInfo.Job : Player.Job;
+                    var requiredLevel = Gather_Helper.GetRequiredLevel(first.routeId);
+                    var jobName = Gather_Helper.GetJobName(job);
+                    var jobLevel = Player.GetLevel(job);
+
+                    var message = $"Stopping: {itemName} needs {jobName} level {requiredLevel} for its nodes to show up, but {jobName} is level {jobLevel}. " +
+                                  "Level that job up or remove the item from the list.";
+                    IceLogging.ChatError(message, tag);
+                    SchedulerMain.Fail(message);
                     return true;
                 }
 

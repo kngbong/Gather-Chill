@@ -1,4 +1,5 @@
 ﻿using ECommons.ExcelServices;
+using ECommons.GameHelpers;
 using ECommons.Throttlers;
 using GatherChill.ConfigFiles;
 using GatherChill.Enums;
@@ -177,6 +178,37 @@ namespace GatherChill.Scheduler
             var route = P.routeEditor.GetRoute(routeId);
             return route != null && route.AetheryteId != 0;
         }
+
+        /// <summary>
+        /// Lowest job level the game shows this route's nodes to. Node tiers open up 5 levels early
+        /// (a level 25 node is visible and gatherable from job level 20), so the node level itself is
+        /// not the gate. Below this, the client never creates the node objects at all.
+        /// </summary>
+        public static int GetRequiredLevel(uint routeId)
+        {
+            if (!Gather_Util.Sheet_RouteInfo.TryGetValue(routeId, out var info))
+                return 1;
+
+            return Math.Max(1, (int)info.Level - 5);
+        }
+
+        /// <summary>
+        /// False when the route's job is too low for its nodes; gathering it would just loop
+        /// because no node object ever shows up.
+        /// </summary>
+        public static bool MeetsLevelRequirement(uint routeId)
+        {
+            var job = Gather_Util.Sheet_RouteInfo.TryGetValue(routeId, out var info) ? info.Job : Player.Job;
+            return Player.GetLevel(job) >= GetRequiredLevel(routeId);
+        }
+
+        public static string GetJobName(Job job) => job switch
+        {
+            Job.MIN => "Miner",
+            Job.BTN => "Botanist",
+            Job.FSH => "Fisher",
+            _ => job.ToString(),
+        };
 
         /// <summary>
         /// Routes to use for an item:
