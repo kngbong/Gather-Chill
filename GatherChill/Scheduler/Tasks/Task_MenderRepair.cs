@@ -1,3 +1,4 @@
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Utility;
 using System.Collections.Generic;
@@ -27,7 +28,15 @@ namespace GatherChill.Scheduler.Tasks
         private const uint RepairAutoConfirmNodeId = 13;
 
         private const float InteractRange = 4f;
-        private const float WalkRange = 120f;
+
+        // Menu entries are localized, so match a handful of words for "repair" instead of only English
+        private static readonly string[] RepairMenuKeywords =
+        [
+            "repair", "mend",         // en
+            "repar", "répar", "ripar", // es, fr, pt, it
+            "reparier", "instand",     // de
+            "修理", "수리", "ремонт",   // ja/zh, ko, ru
+        ];
 
         private static readonly TimeSpan RepairTimeout = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan MenderGrace = TimeSpan.FromSeconds(15);
@@ -308,7 +317,7 @@ namespace GatherChill.Scheduler.Tasks
 
                 _menderIds = new HashSet<uint>();
 
-                foreach (var npc in Svc.Data.GetExcelSheet<ENpcResident>())
+                foreach (var npc in Svc.Data.GetExcelSheet<ENpcResident>(ClientLanguage.English))
                 {
                     if (npc.Singular.ExtractText().Contains("mender", StringComparison.OrdinalIgnoreCase))
                         _menderIds.Add(npc.RowId);
@@ -421,8 +430,7 @@ namespace GatherChill.Scheduler.Tasks
             {
                 var text = menu->EntryNames[i].ToString() ?? string.Empty;
 
-                if (!text.Contains("repair", StringComparison.OrdinalIgnoreCase)
-                    && !text.Contains("mend", StringComparison.OrdinalIgnoreCase))
+                if (!IsRepairEntry(text))
                     continue;
 
                 if (EzThrottler.Throttle($"Mender Repair Menu {addonName}", 500))
@@ -432,6 +440,17 @@ namespace GatherChill.Scheduler.Tasks
                 }
 
                 return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsRepairEntry(string text)
+        {
+            foreach (var keyword in RepairMenuKeywords)
+            {
+                if (text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    return true;
             }
 
             return false;
