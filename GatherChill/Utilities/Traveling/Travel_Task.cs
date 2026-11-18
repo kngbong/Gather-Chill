@@ -11,11 +11,57 @@ namespace GatherChill.Utilities.Traveling;
 public static partial class TravelUtil
 {
     private static (uint baseId, bool flyingRequired) LastNode = (0, false);
-    private static int StuckCounter = 0;
+    private static int _flyPathAttempts = 0;
+    private static uint _flightFallbackWarnedTerritory = 0;
+
+    /// <summary>
+    /// Some route files mark ARR locations as flying-only even though those zones never supported flight.
+    /// Honouring that flag makes Task_FlyTo mount and jump on the spot forever, so only trust it where
+    /// flight is actually possible.
+    /// </summary>
+    private static bool TerritorySupportsFlight()
+    {
+        if (Player.Territory.ValueNullable is not { } territory)
+            return false;
+
+        return territory.Mount && !territory.IsPvpZone && territory.ExVersion.Value.RowId > 0;
+    }
+
+    private static bool RequiresFlight(NodeLocation node)
+    {
+        if (!node.RequiresFlying)
+            return false;
+
+        if (TerritorySupportsFlight())
+            return true;
+
+        if (_flightFallbackWarnedTerritory != Player.Territory.RowId)
+        {
+            _flightFallbackWarnedTerritory = Player.Territory.RowId;
+            IceLogging.Debug("This route marks a node as flying-only, but this territory doesn't support flying. Walking to it instead.", "Travel: Flight Check");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Flight is only usable in territories that support it and once it has been unlocked there.
+    /// </summary>
+    private static bool CanFlyHere()
+    {
+        if (Svc.Condition[ConditionFlag.InFlight])
+            return true;
+
+        if (!TerritorySupportsFlight())
+            return false;
+
+        // Not mounted yet: Task_FlyTo mounts first and checks again on a later tick.
+        return !Player.Mounted || Player.CanFly;
+    }
 
     public static void Gathering_TravelCheck(NodeLocation node)
     {
-        bool flyingRequired = node.RequiresFlying;
+        bool flyingRequired = RequiresFlight(node);
         bool optionalFly = C.OptionalFly;
         bool minFlyDistance = C.Fly_MinDistance < Player.DistanceTo(node.Position);
 
@@ -34,7 +80,7 @@ public static partial class TravelUtil
         bool UpdateLastInfo()
         {
             LastNode.baseId = baseId;
-            LastNode.flyingRequired = node.RequiresFlying;
+            LastNode.flyingRequired = RequiresFlight(node);
             return true;
         }
 
@@ -49,7 +95,7 @@ public static partial class TravelUtil
             );
         }
 
-        if (node.RequiresFlying || Svc.Condition[ConditionFlag.InFlight])
+        if (RequiresFlight(node) || Svc.Condition[ConditionFlag.InFlight])
         {
             EnqueueFly();
             return;
@@ -177,7 +223,13 @@ public static partial class TravelUtil
     }
     public static bool Task_FlyTo(Vector3 pos, bool waitForBusy = true, float distance = 2.0f, bool stayMounted = false)
     {
-        bool isFlying = Svc.Condition[ConditionFlag.InFlight];
+        const string tag = "Navmesh: Fly -> Destination";
+
+        // Flight isn't possible in every zone (ARR, duties, or flight not unlocked yet). Without this
+        // guard a fly request there mounts and jumps in place forever instead of moving.
+        if (!CanFlyHere())
+            return Task_GroundTo(pos, waitForBusy, distance, stayMounted);
+
         bool mounted = Player.Mounted;
 
         if (!P.navmesh.Installed)
@@ -195,8 +247,8 @@ public static partial class TravelUtil
             if (CheckAndHandleStuck())
                 return false;
 
-            if (StuckCounter != 0)
-                StuckCounter = 0;
+            if (_flyPathAttempts != 0)
+                _flyPathAttempts = 0;
 
             if (!mounted)
             {
@@ -254,15 +306,18 @@ public static partial class TravelUtil
             }
             else
             {
-                if (StuckCounter >= 5)
-                {
-                    JumpAction();
-                    StuckCounter = 0;
-                }
-
                 if (EzThrottler.Throttle("Commence Navmesh Movement"))
                 {
-                    StuckCounter += 1;
+                    // A flight path that never starts (no path, flight unusable) must not turn into an
+                    // endless mount/jump loop. Walk the rest of the way instead.
+                    if (_flyPathAttempts >= 10)
+                    {
+                        IceLogging.Debug("Couldn't start a flight path after several attempts, walking instead", tag);
+                        _flyPathAttempts = 0;
+                        return Task_GroundTo(pos, waitForBusy, distance, stayMounted);
+                    }
+
+                    _flyPathAttempts++;
                     P.navmesh.SetTolerance(0.25f);
                     IceLogging.DestinationLogs.Log(pos);
                     P.navmesh.PathfindAndMoveTo(pos, true);
