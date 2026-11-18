@@ -176,6 +176,28 @@ public static partial class SettingsUi
         }
     };
 
+    private static SettingEntry GatherUnknownLogItems = new()
+    {
+        Label = "Gather Missing Log Items",
+        Category = GatheringOptions,
+        Keywords = new[] { "Gathering Log", "Log", "Unknown", "New", "First Time", "Uncollected" },
+        Draw = () =>
+        {
+            var v = C.Gather_UnknownLogItems;
+            if (ImGui.Checkbox("Gather items missing from the gathering log", ref v))
+            {
+                C.Gather_UnknownLogItems = v;
+                C.Save();
+            }
+
+            ImGui.SameLine();
+            ImGui_Ice.IconWithTooltip(FontAwesomeIcon.QuestionCircle,
+                "While gathering, picks any item in the node that isn't in your gathering log yet.\n" +
+                "Each item is only tried once per node visit, and it still gathers your actual list.",
+                false);
+        }
+    };
+
     private static SettingEntry CollectabilityGoal = new()
     {
         Label = "Goal Collectability",

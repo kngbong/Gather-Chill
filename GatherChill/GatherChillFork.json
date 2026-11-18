@@ -1,0 +1,15 @@
+{
+  "Author": "Ice, bongo",
+  "Name": "Gather & Chill (fork)",
+  "Punchline": "The gathering companion that we all needed.",
+  "Description": "A gathering plugin that will help you with your gathering needs. Between gathering items for you, or self applying buffs to make the task of gathering monotonous.\n\nFork additions:\n+ Repair at a mender during a run, keeping your gear above a durability threshold\n+ Gather items you've never collected before, so their gathering log entries get filled",
+  "RepoUrl": "https://github.com/kngbong/Gather-Chill",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "Gather",
+    "Miner",
+    "Botanist",
+    "Fisher",
+    "Crafting Helper"
+  ]
+}

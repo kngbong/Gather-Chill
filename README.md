@@ -4,6 +4,21 @@ Gather & Chill
 ---------------------------
 
 The plugin that is meant to help gather your Miner and Botanist needs, so you can focus on other things in your day. 
+
+> **This is a fork of [LeontopodiumNivale14/Gather-Chill](https://github.com/LeontopodiumNivale14/Gather-Chill).**
+>
+> Install it by adding this repo to Dalamud: `https://raw.githubusercontent.com/kngbong/Gather-Chill/main/repo.json`
+>
+> Extra settings in this fork (Settings -> Repair & Spiritbond / Gathering Options):
+> - **Repair Method -> Mender (Gil)**: before heading to a node, travels to a town mender with an aetheryte
+>   and pays gil to repair all equipped gear once anything drops to the **Repair Threshold**.
+>   Pick a specific destination or leave it on **Auto** (same zone first, then any attuned mender).
+> - **Gather Missing Log Items**: while gathering, any item in the node that has never been gathered before
+>   is collected once, so its Gathering Log entry gets filled.
+>
+> Note: this fork uses a different internal name (`GatherChillFork`), so it installs next to the original
+> plugin without replacing it. Don't have both enabled at the same time.
+
 - Add items to your list and set how many you want to gather, or even how many you want to keep in your inventory
 - Save list of items that you need to gather. Want to keep a list of 7000 of each crystal? Maybe you have a gathering list for the new crafted armor you want
 - Ability to return back to your desired location with support from [Lifestream](https://github.com/NightmareXIV/Lifestream), set if you want to return home, an fc, apartment, or even a custom command to run post

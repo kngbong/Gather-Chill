@@ -94,10 +94,12 @@ public static partial class SettingsUi
         WaitForGP_Collectables,
         WaitForGP_CollectableAmount,
         WaitForGP_HiddenItem,
+        GatherUnknownLogItems,
         CollectabilityGoal,
 
         // Repair Settings
-        SelfRepair,
+        RepairMethod,
+        MenderAetheryte,
         DarkMatter,
         RepairAmount,
         Spiritbond_Extract,

@@ -20,7 +20,7 @@ namespace GatherChill.Scheduler.Tasks
         public static unsafe bool Enqueue()
         {
             string tag = "Task: Self Repair";
-            bool selfRepair = C.SelfRepair;
+            bool selfRepair = C.Repair_Mode == RepairMode.Self;
 
             if (!selfRepair)
             {

@@ -2,6 +2,7 @@ using ECommons.Automation.NeoTaskManager;
 using ECommons.Configuration;
 using ECommons.GameHelpers;
 using GatherChill.ConfigFiles;
+using GatherChill.Enums;
 using GatherChill.GatheringInfo;
 using GatherChill.IPC;
 using GatherChill.Scheduler;
@@ -15,7 +16,7 @@ namespace GatherChill;
 
 public sealed class GatherChill : IDalamudPlugin
 {
-    public string Name => "GatherChill";
+    public string Name => "Gather & Chill (fork)";
     internal static GatherChill P = null!;
     public static Config C => P.config;
     private Config config;
@@ -57,6 +58,16 @@ public sealed class GatherChill : IDalamudPlugin
     {
         EzConfig.Migrate<Config>();
         config = EzConfig.Init<Config>();
+
+        if (C.ConfigVersion < 2)
+        {
+            if (C.SelfRepair)
+                C.Repair_Mode = RepairMode.Self;
+
+            C.ConfigVersion = 2;
+            EzConfig.Save();
+        }
+
         if (C.User_AutoProfile.Migrate())
             EzConfig.Save();
 
@@ -91,16 +102,13 @@ public sealed class GatherChill : IDalamudPlugin
         {
             debugWindow.IsOpen = true;
         };
-        EzCmd.Add("/gatherchill", OnCommand, """
+        EzCmd.Add("/gcf", OnCommand, """
             Open plugin interface
-            /gatherchill start - Starts running list
-            /gatherchill stop - Stops plugin
-            /gatherchill overlay - opens the overlay
-            /forager - other option
-            /chill - other OTHER option
+            /gcf start - Starts running list
+            /gcf stop - Stops plugin
+            /gcf overlay - opens the overlay
+            /gatherchillfork - other option
             """);
-        EzCmd.Add("/forager", OnCommand);
-        EzCmd.Add("/chill", OnCommand);
         Svc.Framework.Update += Tick;
         Svc.PluginInterface.UiBuilder.Draw += OnDraw;
 

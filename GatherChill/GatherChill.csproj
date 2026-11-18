@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Dalamud.NET.Sdk/14.0.2">
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
 
   <PropertyGroup>
-    <Version>1.0.0.5</Version>
+    <Version>1.0.0.6</Version>
     <Description>Gathering automation, to the max!.</Description>
-    <PackageProjectUrl>https://github.com/goatcorp/GatherChill</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/kngbong/Gather-Chill</PackageProjectUrl>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <IsPackable>true</IsPackable>
+    <AssemblyName>GatherChillFork</AssemblyName>
+    <PackageId>GatherChillFork</PackageId>
+    <Authors>Ice, bongo</Authors>
     <RootNamespace>GatherChill</RootNamespace>
     <TargetFramework>net10.0-windows8.0</TargetFramework>
 	<NoWarn>CS8618; CS8625; CS8629; </NoWarn>
@@ -25,7 +28,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Content Include="GatherChill.json" />
+	  <Content Include="GatherChillFork.json" />
 	</ItemGroup>
 
   <ItemGroup>

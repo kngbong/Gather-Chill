@@ -49,6 +49,9 @@ namespace GatherChill.Scheduler.Tasks
         private static bool _hiddenCast = false;      // the hidden-item skill was sent on this node
         private static bool _hiddenReported = false;  // the "item revealed" note was already written
         private static bool _toggleHidden = false;
+
+        // Items already attempted on the current node so an unfilled log entry can't loop forever
+        private static readonly HashSet<uint> UnknownLogAttempted = new();
         private static GatherBuffId BuffCounter = GatherBuffId.Unknown;
         private static Dictionary<GatherBuffId, int> CurrentUse = new()
         {
@@ -170,7 +173,7 @@ namespace GatherChill.Scheduler.Tasks
                     new(() => CheckDesynth(), "Checking for desynth items"),
                     new(() => ChangeJob(), "Checking for job change"),
                     new(() => CheckEquipment(), "Checking for equipment requirement"),
-                    new(() => Task_SelfRepair.Enqueue(), "Self Repair Check"),
+                    new(() => Task_Repair.Enqueue(), "Repair Check"),
                     new(() => Task_Spiritbond.Enqueue(), "Spiritbond Check"),
                     new(() => Travel_FarCheck(), "Traveling to node group"));
             }
@@ -659,6 +662,10 @@ namespace GatherChill.Scheduler.Tasks
             if (gather.CurrentIntegrity == 0)
                 return false;
 
+            // One item per node that isn't in the gathering log yet, so its entry gets filled
+            if (C.Gather_UnknownLogItems && TryGatherUnknownLogItem(gather))
+                return false;
+
             var goalItem = gather.GatheredItems.FirstOrDefault(x => IsGoalItem(x.ItemID, itemId));
             if (goalItem == null)
                 return HandleMissingGoalItem(gather, itemId);
@@ -689,6 +696,48 @@ namespace GatherChill.Scheduler.Tasks
             }
 
             return false;
+        }
+
+        private static bool TryGatherUnknownLogItem(Utilities.ExtraAddons.Gathering gather)
+        {
+            const string tag = "Gather Route: Log Fill";
+
+            foreach (var item in gather.GatheredItems)
+            {
+                if (item.ItemID == 0 || UnknownLogAttempted.Contains(item.ItemID))
+                    continue;
+
+                if (!IsUnknownLogGatherable(item.ItemID))
+                    continue;
+
+                if (!item.IsEnabled)
+                    continue;
+
+                UnknownLogAttempted.Add(item.ItemID);
+
+                if (EzThrottler.Throttle($"Gathering Unknown Log Item: {item.ItemID}"))
+                {
+                    IceLogging.Info($"Gathering {item.ItemName} [{item.ItemID}] to fill its gathering log entry", tag);
+                    ReplayRecorder.NoteGather(item.ItemID);
+                    item.Gather();
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsUnknownLogGatherable(uint itemId)
+        {
+            if (!Gather_Util.Sheet_ItemInfo.TryGetValue(itemId, out var itemInfo))
+                return false;
+
+            // 0 = no log entry, >= 10000 = not a real gathering log row
+            if (itemInfo.GatheringRow == 0 || itemInfo.GatheringRow >= 10000)
+                return false;
+
+            return !QuestManager.IsGatheringItemGathered(itemInfo.GatheringRow);
         }
 
         private static bool IsGoalItem(uint gatheredItemId, uint goalItemId)
@@ -839,6 +888,7 @@ namespace GatherChill.Scheduler.Tasks
         /// <summary>Runs when the node/item is done.</summary>
         private static void UpdateGatherBuffs()
         {
+            UnknownLogAttempted.Clear();
             HiddenUsed = false;
             _toggleHidden = false;
             _hiddenCast = false;

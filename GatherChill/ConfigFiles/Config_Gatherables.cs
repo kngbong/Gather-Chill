@@ -43,4 +43,7 @@ public partial class Config
     public bool WaitGP_HiddenItem { get; set; } = false;
     public uint TimedNode_MinGP { get; set; } = 0;
     public CollectableTarget Collectable_Target { get; set; } = CollectableTarget.High;
+
+    // Gather anything that shows up in a node but isn't in the gathering log yet
+    public bool Gather_UnknownLogItems { get; set; } = false;
 }
